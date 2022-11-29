@@ -1,0 +1,236 @@
+---
+title: "Kalman filter StatArb Gold and Silver"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+
+```{r include=FALSE}
+library(tidyquant)
+library(tidyverse)
+library(reshape2)
+library(aTSA)
+library(anytime)
+```
+
+# Gold
+
+```{r }
+tickers <- c(read.csv("zacks_custom_screen_2022-04-18.csv")$Ticker,"GLD" )
+```
+
+
+```{r }
+prices <- tq_get(tickers,get = "stock.prices",to="2022-11-28") %>% select(date,symbol,close) %>% spread( symbol, close) 
+date <- prices$date
+prices <- prices %>% select(-date)
+xy <- xts(as.matrix(prices),order.by = date)
+xy <- xy[,which(colSums(is.na(xy))==0) %>% names()]
+tickers <- xy %>% colnames()
+list <- tickers[tickers != "GLD"]
+colnames(xy) <- tickers
+xy %>% as.data.frame() %>% mutate(date = as.Date(rownames(.))) %>% gather("stock","price",-date) %>%
+  ggplot(aes(date,price,color=stock))+geom_line()+scale_y_log10()+ggtitle("Gold mining stocks")
+```
+
+
+```{r results='hide'}
+func <-function(t){
+i<-t
+x <- xy[, i]
+y <- xy[, "GLD"]
+x$int <- rep(1, nrow(x))
+delta <- 0.00001
+Vw <- delta/(1-delta)*diag(2)
+Ve <- 0.001
+R <- matrix(rep(0, 4), nrow=2)
+P <- matrix(rep(0, 4), nrow=2)
+beta <- matrix(rep(0, nrow(y)*2), ncol=2)
+y_est <- rep(0, nrow(y))
+e <- rep(0, nrow(y))
+Q <- rep(0, nrow(y))
+for(i in 1:nrow(y)) {
+  if(i > 1) {
+    beta[i, ] <- beta[i-1, ] 
+    R <- P + Vw 
+  }
+  y_est[i] <- x[i, ] %*% beta[i, ] 
+  Q[i] <- x[i, ] %*% R %*% t(x[i, ]) + Ve 
+  
+  
+  e[i] <- y[i] - y_est[i]
+  K <- R %*% t(x[i, ]) / Q[i] 
+  
+  
+  beta[i, ] <- beta[i, ] + K * e[i]
+  P = R - K %*% x[i, ] %*% R
+}
+
+e <- xts(e, order.by=index(xy))
+sqrtQ <- xts(sqrt(Q), order.by=index(xy))
+signals <- merge(e, 15*sqrtQ, 15*-sqrtQ)
+colnames(signals) <- c("e", "sqrtQ", "negsqrtQ")
+
+
+
+sig <- ifelse((signals[1:length(index(signals))]$e > signals[1:length(index(signals))]$sqrtQ) & (lag.xts(signals$e, 1) < lag.xts(signals$sqrtQ, 1)), -1, 
+           ifelse((signals[1:length(index(signals))]$e < signals[1:length(index(signals))]$negsqrtQ) & (lag.xts(signals$e, 1) > lag.xts(signals$negsqrtQ, 1)), 1, 0))
+colnames(sig) <- "sig"
+
+sig[sig == 0] <- NA
+sig <- na.locf(sig)
+sig <- diff(sig)/2
+plot(sig)
+
+sim <- merge(lag.xts(sig,1), beta[, 1], x[, 1], y)
+colnames(sim) <- c("sig", "hedge", tickers[1], tickers[2])
+
+i <- t
+
+
+sim$posX <- sim$sig * -1
+
+difference <-c(diff(sim[,3])/sim[,3][-1] )
+
+pnl <- sim$posX * difference
+
+print(pnl)
+
+}
+a <- sapply(list,func)
+
+```
+
+```{r }
+date <-rownames(as.data.frame(xy))
+df
+a<-a %>% as.data.frame() 
+a <-a  %>% na.omit() %>% rowMeans() %>% as.vector()
+gold_strategy <- data.frame(value=a)
+rownames(gold_strategy) <- date[(length(date)-(nrow(gold_strategy)-1)):length(date)]
+gold_strategy <-gold_strategy %>% as.xts()
+
+gold_strategy %>% as.data.frame() %>% mutate(date=as.Date(rownames(.)),value=cumprod(value+1)) %>%
+  ggplot(aes(date,value))+geom_line()+scale_y_log10()+ ggtitle("cumulative returns Gold Strategy")
+
+```
+
+
+
+```{r }
+annualReturn(cumprod(gold_strategy+1)) %>% as.data.frame() %>% mutate(date=as.factor(round(year(as.Date(rownames(.)))))) %>%
+  ggplot(aes(date,yearly.returns))+geom_bar(stat = 'identity')+ ggtitle("Annual returns Gold Strategy")
+```
+
+
+
+# Silver
+
+```{r }
+tickers <- c(read.csv("silver_mining.csv")$Ticker,"SLV" )
+```
+
+
+```{r }
+prices <- tq_get(tickers,get = "stock.prices",to  = "2022-11-28") %>% select(date,symbol,close) %>% spread( symbol, close) 
+date <- prices$date
+prices <- prices %>% select(-date)
+xy <- xts(as.matrix(prices),order.by = date)
+xy <- xy[,which(colSums(is.na(xy))==0) %>% names()]
+tickers <- xy %>% colnames()
+list <- tickers[tickers != "SLV"]
+colnames(xy) <- tickers
+xy %>% as.data.frame() %>% mutate(date = as.Date(rownames(.))) %>% gather("stock","price",-date) %>%
+  ggplot(aes(date,price,color=stock))+geom_line()+scale_y_log10()+ggtitle("Silver mining stocks")
+```
+
+
+```{r results='hide'}
+func <-function(t){
+i<-t
+x <- xy[, i]
+y <- xy[, "SLV"]
+x$int <- rep(1, nrow(x))
+delta <- 0.0001
+Vw <- delta/(1-delta)*diag(2)
+Ve <- 0.001
+R <- matrix(rep(0, 4), nrow=2)
+P <- matrix(rep(0, 4), nrow=2)
+beta <- matrix(rep(0, nrow(y)*2), ncol=2)
+y_est <- rep(0, nrow(y))
+e <- rep(0, nrow(y))
+Q <- rep(0, nrow(y))
+for(i in 1:nrow(y)) {
+  if(i > 1) {
+    beta[i, ] <- beta[i-1, ] 
+    R <- P + Vw 
+  }
+  y_est[i] <- x[i, ] %*% beta[i, ] 
+  Q[i] <- x[i, ] %*% R %*% t(x[i, ]) + Ve 
+  
+ 
+  e[i] <- y[i] - y_est[i]
+  K <- R %*% t(x[i, ]) / Q[i] 
+  
+ 
+  beta[i, ] <- beta[i, ] + K * e[i]
+  P = R - K %*% x[i, ] %*% R
+}
+
+e <- xts(e, order.by=index(xy))
+sqrtQ <- xts(sqrt(Q), order.by=index(xy))
+signals <- merge(e, 3*sqrtQ, 3*-sqrtQ)
+colnames(signals) <- c("e", "sqrtQ", "negsqrtQ")
+
+
+
+sig <- ifelse((signals[1:length(index(signals))]$e > signals[1:length(index(signals))]$sqrtQ) & (lag.xts(signals$e, 1) < lag.xts(signals$sqrtQ, 1)), -1, 
+           ifelse((signals[1:length(index(signals))]$e < signals[1:length(index(signals))]$negsqrtQ) & (lag.xts(signals$e, 1) > lag.xts(signals$negsqrtQ, 1)), 1, 0))
+colnames(sig) <- "sig"
+
+sig[sig == 0] <- NA
+sig <- na.locf(sig)
+sig <- diff(sig)/2
+
+plot(sig)
+
+sim <- merge(lag.xts(sig,1), beta[, 1], x[, 1], y)
+colnames(sim) <- c("sig", "hedge", tickers[1], tickers[2])
+
+i <- t
+
+
+sim$posX <- sim$sig * -1
+
+
+difference <-c(diff(sim[,3])/sim[,3][-1] )
+
+pos<- sim$posX  * difference
+
+print(pos)
+
+}
+a <- sapply(list,func)
+
+```
+
+```{r }
+date <-rownames(as.data.frame(xy))
+
+a<-a %>% as.data.frame() 
+a <-a  %>% na.omit() %>% rowMeans() %>% as.vector()
+silver_strategy <- data.frame(value=a)
+rownames(silver_strategy) <- date[(length(date)-(nrow(silver_strategy)-1)):length(date)]
+silver_strategy <-silver_strategy %>% as.xts()
+silver_strategy %>% as.data.frame() %>% mutate(date=as.Date(rownames(.)),value=cumprod(value+1)) %>%
+  ggplot(aes(date,value))+geom_line()+scale_y_log10()+ ggtitle("cumulative returns Silver Strategy")
+```
+
+```{r}
+annualReturn(cumprod(silver_strategy+1)) %>% as.data.frame() %>% mutate(date=as.factor(round(year(as.Date(rownames(.)))))) %>%
+  ggplot(aes(date,yearly.returns))+geom_bar(stat = 'identity')+ ggtitle("Annual returns Silver Strategy")
+```
+
+
